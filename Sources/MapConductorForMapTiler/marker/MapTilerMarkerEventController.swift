@@ -1,0 +1,80 @@
+import CoreLocation
+import Foundation
+import MapConductorCore
+import MapLibre
+import UIKit
+
+@MainActor
+final class MapTilerMarkerEventController {
+    private weak var mapView: MLNMapView?
+    private let markerController: MapTilerMarkerController
+
+    private var draggingMarkerId: String?
+
+    init(mapView: MLNMapView?, markerController: MapTilerMarkerController) {
+        self.mapView = mapView
+        self.markerController = markerController
+    }
+
+    func handleTap(at point: CGPoint) -> Bool {
+        // Check native symbol markers first.
+        if let markerId = markerController.renderer.markerId(at: point),
+           let state = markerController.getMarkerState(for: markerId),
+           state.clickable {
+            markerController.dispatchClick(state: state)
+            return true
+        }
+        // Fall back to geographic proximity search for tile-rendered markers.
+        return markerController.handleTiledMarkerTap(at: point)
+    }
+
+    func handleLongPress(_ recognizer: UILongPressGestureRecognizer) -> Bool {
+        guard let mapView else { return false }
+        let point = recognizer.location(in: mapView)
+
+        switch recognizer.state {
+        case .began:
+            guard let markerId = markerController.renderer.markerId(at: point),
+                  let state = markerController.getMarkerState(for: markerId),
+                  state.draggable else { return false }
+            draggingMarkerId = markerId
+            mapView.isScrollEnabled = false
+            markerController.dispatchDragStart(state: state)
+            markerController.onUpdateInfoBubble(markerId)
+            return true
+        case .changed:
+            guard let markerId = draggingMarkerId,
+                  let state = markerController.getMarkerState(for: markerId) else { return false }
+            let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
+            state.position = GeoPoint(latitude: coordinate.latitude, longitude: coordinate.longitude, altitude: 0)
+            markerController.dispatchDrag(state: state)
+            markerController.onUpdateInfoBubble(markerId)
+            return true
+        case .ended:
+            guard let markerId = draggingMarkerId,
+                  let state = markerController.getMarkerState(for: markerId) else {
+                mapView.isScrollEnabled = true
+                draggingMarkerId = nil
+                return false
+            }
+            markerController.dispatchDragEnd(state: state)
+            mapView.isScrollEnabled = true
+            draggingMarkerId = nil
+            markerController.onUpdateInfoBubble(markerId)
+            return true
+        case .cancelled, .failed:
+            let wasDragging = draggingMarkerId != nil
+            mapView.isScrollEnabled = true
+            draggingMarkerId = nil
+            return wasDragging
+        default:
+            return draggingMarkerId != nil
+        }
+    }
+
+    func unbind() {
+        mapView?.isScrollEnabled = true
+        mapView = nil
+        draggingMarkerId = nil
+    }
+}

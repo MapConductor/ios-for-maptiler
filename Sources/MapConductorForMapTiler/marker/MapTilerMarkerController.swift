@@ -1,0 +1,298 @@
+import Combine
+import CoreGraphics
+import CoreLocation
+import MapLibre
+import MapConductorCore
+import UIKit
+
+@MainActor
+final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, MapTilerMarkerRenderer> {
+    private weak var mapView: MLNMapView?
+
+    private var markerSubscriptions: [String: AnyCancellable] = [:]
+    private var markerStatesById: [String: MarkerState] = [:]
+    private var latestStates: [MarkerState] = []
+    private var isStyleLoaded: Bool = false
+
+    private var eventController: MapTilerMarkerEventController?
+    let onUpdateInfoBubble: (String) -> Void
+
+    // MARK: - Marker tiling
+
+    var tilingOptions: MarkerTilingOptions = .Default
+    private var tileRenderer: MarkerTileRenderer<MLNPointFeature>?
+    private var tileRouteId: String?
+    private var tileVersion: Int64 = 0
+    private var tiledMarkerIds: Set<String> = []
+    private var tileSourceId: String?
+    private var tileLayerId: String?
+    private var lastServerBaseUrl: String = ""
+    private let defaultMarkerIconForTiling: BitmapIcon = DefaultMarkerIcon().toBitmapIcon()
+
+    init(mapView: MLNMapView?, onUpdateInfoBubble: @escaping (String) -> Void) {
+        self.mapView = mapView
+        self.onUpdateInfoBubble = onUpdateInfoBubble
+
+        let markerManager = MarkerManager<MLNPointFeature>.defaultManager()
+        let layer = MarkerLayer(
+            sourceId: "mapconductor-markers-source-\(UUID().uuidString)",
+            layerId: "mapconductor-markers-layer-\(UUID().uuidString)"
+        )
+
+        let renderer = MapTilerMarkerRenderer(
+            mapView: mapView,
+            markerManager: markerManager,
+            markerLayer: layer
+        )
+
+        super.init(markerManager: markerManager, renderer: renderer)
+
+        self.eventController = MapTilerMarkerEventController(mapView: mapView, markerController: self)
+    }
+
+    private static var retinaAwareTileSize: Int {
+        256 * max(1, Int(UIScreen.main.scale))
+    }
+
+    private func setupTileRenderer() {
+        let routeId = "mapconductor-markers-\(UUID().uuidString)"
+        let contentScale = Double(UIScreen.main.scale)
+        let baseCallback = tilingOptions.iconScaleCallback
+        let scaledCallback: ((MarkerState, Int) -> Double)? = { state, zoom in
+            (baseCallback?(state, zoom) ?? 1.0) * contentScale
+        }
+        let renderer = MarkerTileRenderer<MLNPointFeature>(
+            markerManager: markerManager,
+            tileSize: Self.retinaAwareTileSize,
+            cacheSizeBytes: tilingOptions.cacheSize,
+            debugTileOverlay: tilingOptions.debugTileOverlay,
+            iconScaleCallback: scaledCallback
+        )
+        TileServerRegistry.get().register(routeId: routeId, provider: renderer)
+        tileRenderer = renderer
+        tileRouteId = routeId
+    }
+
+    func onStyleLoaded(_ style: MLNStyle) {
+        isStyleLoaded = true
+        MCLog.marker("MapTilerMarkerController.onStyleLoaded tiledCount=\(tiledMarkerIds.count) latestStates=\(latestStates.count)")
+        renderer.onStyleLoaded(style)
+        // Re-attach tile raster layer if there are already tiled markers
+        if !tiledMarkerIds.isEmpty {
+            updateTileLayer(style: style, hasTiledMarkers: true)
+        }
+        if !latestStates.isEmpty {
+            Task { [weak self] in
+                guard let self else { return }
+                await self.add(data: self.latestStates)
+            }
+        }
+    }
+
+    func handleTap(at point: CGPoint) -> Bool {
+        eventController?.handleTap(at: point) ?? false
+    }
+
+    func handleLongPress(_ recognizer: UILongPressGestureRecognizer) -> Bool {
+        eventController?.handleLongPress(recognizer) ?? false
+    }
+
+    func syncMarkers(_ markers: [Marker]) {
+        MCLog.marker("MapTilerMarkerController.syncMarkers count=\(markers.count) styleLoaded=\(isStyleLoaded)")
+        let newIds = Set(markers.map { $0.id })
+        let oldIds = Set(markerStatesById.keys)
+
+        var newStatesById: [String: MarkerState] = [:]
+        for marker in markers {
+            let state = marker.state
+            if let existingState = markerStatesById[state.id], existingState !== state {
+                markerSubscriptions[state.id]?.cancel()
+                markerSubscriptions.removeValue(forKey: state.id)
+            }
+            newStatesById[state.id] = state
+        }
+
+        markerStatesById = newStatesById
+        latestStates = markers.map { $0.state }
+
+        if isStyleLoaded {
+            // Always call add() so position changes from drag are reflected in tiled markers.
+            // refreshTileLayerIfNeeded() handles the server-restart URL case synchronously.
+            refreshTileLayerIfNeeded()
+            Task { [weak self] in
+                guard let self else { return }
+                MCLog.marker("MapTilerMarkerController.syncMarkers -> add()")
+                await self.add(data: self.latestStates)
+            }
+        }
+
+        for marker in markers {
+            subscribeToMarker(marker.state)
+            onUpdateInfoBubble(marker.id)
+        }
+
+        let removedIds = oldIds.subtracting(newIds)
+        for id in removedIds {
+            markerSubscriptions[id]?.cancel()
+            markerSubscriptions.removeValue(forKey: id)
+        }
+    }
+
+    private func subscribeToMarker(_ state: MarkerState) {
+        guard markerSubscriptions[state.id] == nil else { return }
+        MCLog.marker("MapTilerMarkerController.subscribe id=\(state.id)")
+        markerSubscriptions[state.id] = state.asFlow()
+            .dropFirst() // Skip initial value to avoid triggering update on subscription
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                guard self.markerStatesById[state.id] != nil else { return }
+                MCLog.marker("MapTilerMarkerController.asFlow emit id=\(state.id) anim=\(String(describing: state.getAnimation()))")
+                Task { [weak self] in
+                    guard let self else { return }
+                    await self.update(state: state)
+                    self.onUpdateInfoBubble(state.id)
+                }
+            }
+    }
+
+    func getMarkerState(for id: String) -> MarkerState? {
+        markerManager.getEntity(id)?.state
+    }
+
+    func getIcon(for state: MarkerState) -> BitmapIcon {
+        let resolvedIcon = state.icon ?? DefaultMarkerIcon()
+        return resolvedIcon.toBitmapIcon()
+    }
+
+    // MARK: - Tiled marker override
+
+    override func update(state: MarkerState) async {
+        await super.update(state: state)
+        // For tiled markers, position changes don't propagate through the regular renderer path.
+        // Invalidate the tile cache so the new position appears on the raster overlay.
+        guard tiledMarkerIds.contains(state.id), let tileRenderer else { return }
+        tileRenderer.invalidate()
+        tileVersion += 1
+        if let style = mapView?.style {
+            updateTileLayer(style: style, hasTiledMarkers: true)
+        }
+    }
+
+    override func add(data: [MarkerState]) async {
+        guard tilingOptions.enabled else {
+            MCLog.marker("MapTilerMarkerController.add tilingDisabled count=\(data.count)")
+            await super.add(data: data)
+            return
+        }
+        if tileRenderer == nil { setupTileRenderer() }
+
+        let shouldTileAll = data.count >= tilingOptions.minMarkerCount
+        MCLog.marker("MapTilerMarkerController.add count=\(data.count) minMarkerCount=\(tilingOptions.minMarkerCount) shouldTileAll=\(shouldTileAll)")
+        var localTiledMarkerIds = tiledMarkerIds
+        let result = await MarkerIngestionEngine.ingest(
+            data: data,
+            markerManager: markerManager,
+            renderer: renderer,
+            defaultMarkerIcon: defaultMarkerIconForTiling,
+            tilingEnabled: tilingOptions.enabled,
+            tiledMarkerIds: &localTiledMarkerIds,
+            shouldTile: { [shouldTileAll] _ in shouldTileAll }
+        )
+        tiledMarkerIds = localTiledMarkerIds
+        MCLog.marker("MapTilerMarkerController.add ingest done tiledDataChanged=\(result.tiledDataChanged) hasTiledMarkers=\(result.hasTiledMarkers) tiledCount=\(tiledMarkerIds.count) style=\(mapView?.style != nil)")
+
+        if result.tiledDataChanged, let tileRenderer {
+            tileRenderer.invalidate()
+            tileVersion += 1
+            if let style = mapView?.style {
+                updateTileLayer(style: style, hasTiledMarkers: result.hasTiledMarkers)
+            } else {
+                MCLog.marker("MapTilerMarkerController.add skipped updateTileLayer: style not loaded")
+            }
+        }
+    }
+
+    private func refreshTileLayerIfNeeded() {
+        guard !tiledMarkerIds.isEmpty, let style = mapView?.style else { return }
+        let server = TileServerRegistry.get()
+        guard server.baseUrl != lastServerBaseUrl else { return }
+        MCLog.marker("MapTilerMarkerController.refreshTileLayerIfNeeded serverRestarted oldUrl=\(lastServerBaseUrl) newUrl=\(server.baseUrl)")
+        updateTileLayer(style: style, hasTiledMarkers: true)
+    }
+
+    private func updateTileLayer(style: MLNStyle, hasTiledMarkers: Bool) {
+        guard let routeId = tileRouteId else { return }
+        let server = TileServerRegistry.get()
+        lastServerBaseUrl = server.baseUrl
+        let urlTemplate = server.urlTemplate(routeId: routeId, version: tileVersion)
+        let sourceId = tileSourceId ?? "mapconductor-tile-markers-source-\(routeId)"
+        let layerId = tileLayerId ?? "mapconductor-tile-markers-layer-\(routeId)"
+        tileSourceId = sourceId
+        tileLayerId = layerId
+        MCLog.marker("MapTilerMarkerController.updateTileLayer hasTiledMarkers=\(hasTiledMarkers) version=\(tileVersion) urlTemplate=\(urlTemplate)")
+
+        // Remove old layer/source
+        if let existingLayer = style.layer(withIdentifier: layerId) {
+            style.removeLayer(existingLayer)
+        }
+        if let existingSource = style.source(withIdentifier: sourceId) {
+            style.removeSource(existingSource)
+        }
+
+        guard hasTiledMarkers else { return }
+
+        let options: [MLNTileSourceOption: Any] = [.tileSize: NSNumber(value: 256)]
+        let source = MLNRasterTileSource(identifier: sourceId, tileURLTemplates: [urlTemplate], options: options)
+        let layer = MLNRasterStyleLayer(identifier: layerId, source: source)
+        style.addSource(source)
+        style.addLayer(layer)
+    }
+
+    /// Hit-test tiled markers at the given screen point (pts). Returns true if a clickable marker was found.
+    func handleTiledMarkerTap(at screenPoint: CGPoint) -> Bool {
+        MCLog.marker("MapTilerMarkerController.handleTiledMarkerTap point=\(screenPoint) tiledCount=\(tiledMarkerIds.count)")
+        guard !tiledMarkerIds.isEmpty, let mapView, let tileRenderer else { return false }
+        let state = tileRenderer.hitTest(
+            screenPoint: screenPoint,
+            markerIds: tiledMarkerIds,
+            zoom: Int(mapView.zoomLevel.rounded()),
+            unproject: { point in
+                let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
+                return GeoPoint(latitude: coordinate.latitude, longitude: coordinate.longitude, altitude: 0)
+            }
+        ) { point in
+            mapView.convert(
+                CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude),
+                toPointTo: mapView
+            )
+        }
+
+        if let state {
+            MCLog.marker("MapTilerMarkerController.handleTiledMarkerTap hit id=\(state.id)")
+            dispatchClick(state: state)
+            return true
+        }
+        MCLog.marker("MapTilerMarkerController.handleTiledMarkerTap miss")
+        return false
+    }
+
+    func unbind() {
+        markerSubscriptions.values.forEach { $0.cancel() }
+        markerSubscriptions.removeAll()
+        markerStatesById.removeAll()
+        latestStates.removeAll()
+        isStyleLoaded = false
+        if let routeId = tileRouteId {
+            TileServerRegistry.get().unregister(routeId: routeId)
+        }
+        tileRenderer = nil
+        tileRouteId = nil
+        tiledMarkerIds.removeAll()
+        eventController?.unbind()
+        eventController = nil
+        renderer.unbind()
+        mapView = nil
+        destroy()
+    }
+}
