@@ -4,7 +4,7 @@ import MapConductorCore
 import MapLibre
 
 @MainActor
-final class MapTilerCircleController: CircleController<MLNPointFeature, MapTilerCircleOverlayRenderer> {
+final class MapTilerCircleController: CircleController<MLNPolygonFeature, MapTilerCircleOverlayRenderer> {
     private weak var mapView: MLNMapView?
 
     private var circleSubscriptions: [String: AnyCancellable] = [:]
@@ -15,7 +15,7 @@ final class MapTilerCircleController: CircleController<MLNPointFeature, MapTiler
     init(mapView: MLNMapView?) {
         self.mapView = mapView
 
-        let circleManager = CircleManager<MLNPointFeature>()
+        let circleManager = CircleManager<MLNPolygonFeature>()
         let layer = CircleLayer(
             sourceId: "mapconductor-circles-source-\(UUID().uuidString)",
             layerId: "mapconductor-circles-layer-\(UUID().uuidString)"
