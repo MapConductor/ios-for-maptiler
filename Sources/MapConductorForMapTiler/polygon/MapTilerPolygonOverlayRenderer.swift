@@ -33,8 +33,19 @@ final class MapTilerPolygonOverlayRenderer: AbstractPolygonOverlayRenderer<[MLNP
         mapView = nil
     }
 
+    /// 複数の穴が重なっている場合は結合（union）して重複を解消する。
+    /// 他プロバイダ（MapLibre/TomTom 等）と同じ `unionHoles()` を用いる。
+    ///
+    /// MapTiler（MapLibre GL）は Polygon の inner ring で複数の穴を描けるが、偶奇規則なので
+    /// 重なった穴は打ち消し合い、重なり部分が塗られてしまう。コンポーネント層（`Polygon`）の
+    /// ユニオンは state 1 インスタンスにつき 1 回きりで、頂点ドラッグ後の `state.holes`
+    /// 差し替えには追従しないため、android-for-maptiler と同じくここでも結合する。
+    private func resolveHoles(_ state: PolygonState) -> PolygonState {
+        state.holes.count > 1 ? state.unionHoles() : state
+    }
+
     override func createPolygon(state: PolygonState) async -> [MLNPolygonFeature]? {
-        let resolved = state.holes.count > 1 ? state.unionHoles() : state
+        let resolved = resolveHoles(state)
         let features = createMapTilerPolygons(
             id: resolved.id,
             points: resolved.points,
