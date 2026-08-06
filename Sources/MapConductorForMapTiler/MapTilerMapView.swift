@@ -170,6 +170,12 @@ private struct MapTilerMapViewRepresentable: UIViewRepresentable {
             uiView.styleURL = styleURL
             context.coordinator.appliedStyleId = state.mapDesignType.styleId
         }
+        // ジェスチャはここ（updateUIView）で直接適用する。SwiftUI の同期フックは常に
+        // ネイティブビューを持っているのに対し、コントローラはまだ生成されていない／
+        // まだ mapView を保持していないことがあり、その場合に設定が落ちる（実機の
+        // UISettingsUITests が MapLibre/MapTiler/Mapbox で検出）。
+        // コントローラ側の `applyUISettings` は android-sdk と同じ API を提供するための
+        // 命令的な入口で、同じ値を同じネイティブプロパティへ書く。
         uiView.isScrollEnabled = state.uiSettings.scrollGesture
         uiView.isZoomEnabled = state.uiSettings.zoomGesture
         uiView.isRotateEnabled = state.uiSettings.rotateGesture
@@ -189,7 +195,8 @@ private struct MapTilerMapViewRepresentable: UIViewRepresentable {
     @MainActor
     final class Coordinator: MapViewCoordinatorBase<MapTilerViewState>, MLNMapViewDelegate {
         weak var mapView: MLNMapView?
-        private var controller: MapTilerViewController?
+        // updateUIView から applyUISettings を呼ぶため private を外している。
+        private(set) var controller: MapTilerViewController?
         private var markerController: MapTilerMarkerController?
         private var groundImageController: MapTilerGroundImageController?
         private var rasterController: MapTilerRasterLayerController?
@@ -237,14 +244,13 @@ private struct MapTilerMapViewRepresentable: UIViewRepresentable {
             }
             // Publish marker rendering as a map-scoped capability. Add-on modules resolve it
             // from the registry; this provider never learns that clustering exists.
-            // 再バインド時に前回の capability が残らないよう、登録前に空にする
-            // （android-sdk の各 *MapView.kt が `registry.clear()` してから put するのと同じ）。
-            state.serviceRegistry.clear()
             state.serviceRegistry.put(MarkerRenderingSupportKey.self, strategyManager)
 
             let controller = MapTilerViewController(mapView: mapView)
             self.controller = controller
             state.setController(controller)
+            // 拡張モジュール（ヒートマップ等）がオーバーレイコントローラを登録できるようにする。
+            state.serviceRegistry.put(OverlayControllerRegistryKey.self, controller.overlayControllers)
             state.setMapViewHolder(controller.typedHolder)
 
             let markerController = MapTilerMarkerController(mapView: mapView) { [weak self] id in
@@ -310,8 +316,13 @@ private struct MapTilerMapViewRepresentable: UIViewRepresentable {
         }
 
         func unbind() {
+            // 登録した capability を取り下げる。レジストリの持ち主は state で、ビューより長生きするため、
+            // ここで外さないと破棄済みのコントローラを掴んだまま残る。
+            state.serviceRegistry.removeProviderRegistrations()
             markerController?.renderer.animationOverlay?.unbind()
             markerController?.renderer.animationOverlay = nil
+            // 登録済みオーバーレイコントローラ（拡張モジュール含む）を破棄する。
+            controller?.destroy()
             state.setController(nil)
             state.setMapViewHolder(nil)
             controller = nil

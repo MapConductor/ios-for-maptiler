@@ -11,8 +11,11 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
 
     private var markerSubscriptions: [String: AnyCancellable] = [:]
     private var markerStatesById: [String: MarkerState] = [:]
-    private var latestStates: [MarkerState] = []
-    private var isStyleLoaded: Bool = false
+    /// スタイル読み込み待ちの取り込み。捨てずに保留し、`onStyleLoaded` で流す。
+    /// 「なぜ待つ必要があるか」は `DeferredUntilReady` の説明にある（実測 51 秒の件）。
+    private lazy var styleGate = DeferredUntilReady<[MarkerState]> { [weak self] states in
+        Task { [weak self] in await self?.add(data: states) }
+    }
 
     private var eventController: MapTilerMarkerEventController?
     let onUpdateInfoBubble: (String) -> Void
@@ -74,19 +77,13 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
     }
 
     func onStyleLoaded(_ style: MLNStyle) {
-        isStyleLoaded = true
-        MCLog.marker("MapTilerMarkerController.onStyleLoaded tiledCount=\(tiledMarkerIds.count) latestStates=\(latestStates.count)")
+        MCLog.marker("MapTilerMarkerController.onStyleLoaded tiledCount=\(tiledMarkerIds.count)")
         renderer.onStyleLoaded(style)
         // Re-attach tile raster layer if there are already tiled markers
         if !tiledMarkerIds.isEmpty {
             updateTileLayer(style: style, hasTiledMarkers: true)
         }
-        if !latestStates.isEmpty {
-            Task { [weak self] in
-                guard let self else { return }
-                await self.add(data: self.latestStates)
-            }
-        }
+        styleGate.markReady()
     }
 
     func handleTap(at point: CGPoint) -> Bool {
@@ -98,7 +95,7 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
     }
 
     func syncMarkers(_ markers: [Marker]) {
-        MCLog.marker("MapTilerMarkerController.syncMarkers count=\(markers.count) styleLoaded=\(isStyleLoaded)")
+        MCLog.marker("MapTilerMarkerController.syncMarkers count=\(markers.count) styleReady=\(styleGate.isReady)")
         let newIds = Set(markers.map { $0.id })
         let oldIds = Set(markerStatesById.keys)
 
@@ -113,18 +110,11 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
         }
 
         markerStatesById = newStatesById
-        latestStates = markers.map { $0.state }
 
-        if isStyleLoaded {
-            // Always call add() so position changes from drag are reflected in tiled markers.
-            // refreshTileLayerIfNeeded() handles the server-restart URL case synchronously.
-            refreshTileLayerIfNeeded()
-            Task { [weak self] in
-                guard let self else { return }
-                MCLog.marker("MapTilerMarkerController.syncMarkers -> add()")
-                await self.add(data: self.latestStates)
-            }
-        }
+        // Always call add() so position changes from drag are reflected in tiled markers.
+        // refreshTileLayerIfNeeded() handles the server-restart URL case synchronously.
+        if styleGate.isReady { refreshTileLayerIfNeeded() }
+        styleGate.submit(markers.map { $0.state })
 
         for marker in markers {
             subscribeToMarker(marker.state)
@@ -281,8 +271,7 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
         markerSubscriptions.values.forEach { $0.cancel() }
         markerSubscriptions.removeAll()
         markerStatesById.removeAll()
-        latestStates.removeAll()
-        isStyleLoaded = false
+        styleGate.reset()
         if let routeId = tileRouteId {
             TileServerRegistry.get().unregister(routeId: routeId)
         }
