@@ -274,6 +274,15 @@ private struct MapTilerMapViewRepresentable: UIViewRepresentable {
             self.polygonController = polygonController
             self.hullPolygonController = MapTilerPolygonController(mapView: mapView)
 
+            // クリックカスケードとスロット解決がここから kind で引く。
+            // **登録を忘れるとタップに反応しなくなる。**
+            controller.registerOverlayController(markerController)
+            controller.registerOverlayController(circleController)
+            controller.registerOverlayController(polylineController)
+            controller.registerOverlayController(polygonController)
+            controller.registerOverlayController(groundImageController)
+            controller.registerOverlayController(rasterController)
+
             let overlayScope = MapOverlayScope()
             self.overlayScope = overlayScope
             bindOverlayCollector(overlayScope.circleCollector, to: circleController)
@@ -483,23 +492,14 @@ private struct MapTilerMapViewRepresentable: UIViewRepresentable {
             }
 
             let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
-            if circleController?.handleTap(at: coordinate) == true {
-                updateInfoBubbleLayouts()
-                return
-            }
-            if polylineController?.handleTap(at: coordinate) == true {
-                updateInfoBubbleLayouts()
-                return
-            }
-            if polygonController?.handleTap(at: coordinate) == true {
-                updateInfoBubbleLayouts()
-                return
-            }
-            if groundImageController?.handleTap(at: coordinate) == true {
-                updateInfoBubbleLayouts()
-                return
-            }
             let geoPoint = GeoPoint(latitude: coordinate.latitude, longitude: coordinate.longitude, altitude: 0)
+            // circle → groundImage → polyline → polygon の一本道。
+            // 順序と先勝ちはコアの dispatchOverlayTap が持つ。
+            // 移行前はここで circle → polyline → polygon → groundImage の独自順だった。
+            if controller?.dispatchOverlayTap(position: geoPoint) == true {
+                updateInfoBubbleLayouts()
+                return
+            }
             controller?.notifyMapClick(geoPoint)
             onMapClick?(geoPoint)
         }

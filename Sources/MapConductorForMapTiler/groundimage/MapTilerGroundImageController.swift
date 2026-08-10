@@ -4,7 +4,7 @@ import MapConductorCore
 import MapLibre
 
 @MainActor
-final class MapTilerGroundImageController {
+final class MapTilerGroundImageController: SlottedOverlayController {
     private weak var mapView: MLNMapView?
     private let renderer: MapTilerGroundImageOverlayRenderer
     private let groundImageManager: GroundImageManager<MapTilerGroundImageHandle>
@@ -148,4 +148,26 @@ final class MapTilerGroundImageController {
         mapView = nil
         groundImageManager.destroy()
     }
+    // ── SlottedOverlayController（カスケードとスロット解決） ─────────────
+    //
+    // ★ これを実装し忘れると、コントローラを登録してもタップに反応しない。
+
+    var zIndex: Int { 2 }
+
+    var kind: OverlayKind { .groundImage }
+
+    func hasId(_ id: String) -> Bool { groundImageManager.hasEntity(id) }
+
+    func resolveTap(position: GeoPointProtocol) -> OverlayHit? {
+        guard let hit = groundImageManager.find(position: position) else { return nil }
+        return OverlayHit(kind: .groundImage, clicked: position) {
+            // 配送座標の wrap は GroundImageEvent の生成時に一元化済み。
+            hit.state.onClick?(GroundImageEvent(state: hit.state, clicked: position))
+        }
+    }
+
+    func onCameraChanged(mapCameraPosition _: MapCameraPosition) async {}
+
+    func destroy() { unbind() }
+
 }
