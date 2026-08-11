@@ -122,15 +122,19 @@ private struct MapTilerMapViewRepresentable: UIViewRepresentable {
         mapView.isRotateEnabled = state.uiSettings.rotateGesture
         mapView.isPitchEnabled = state.uiSettings.tiltGesture
         let initialCameraState = state.cameraPosition.toMapTilerCameraState()
+        // pitch を先に、zoom を後に。逆にすると傾けるたびに地図が遠ざかる
+        // （`MapTilerViewController.moveCamera` のコメント参照）。
+        let initialCamera = mapView.camera
+        initialCamera.centerCoordinate = initialCameraState.center
+        initialCamera.heading = initialCameraState.bearing
+        initialCamera.pitch = initialCameraState.tilt
+        mapView.setCamera(initialCamera, animated: false)
         mapView.setCenter(
             initialCameraState.center,
             zoomLevel: initialCameraState.zoom,
             direction: initialCameraState.bearing,
             animated: false
         )
-        let initialCamera = mapView.camera
-        initialCamera.pitch = initialCameraState.tilt
-        mapView.setCamera(initialCamera, animated: false)
 
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleMapTap(_:)))
         tapGesture.cancelsTouchesInView = false
