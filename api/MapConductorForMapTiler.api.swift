@@ -37,6 +37,8 @@ public struct MapTilerDesign : MapConductorForMapTiler.MapTilerMapDesignTypeProt
   public static let Landscape: MapConductorForMapTiler.MapTilerDesign
   public static let Aquarelle: MapConductorForMapTiler.MapTilerDesign
   public static let OpenStreetMap: MapConductorForMapTiler.MapTilerDesign
+  public static let all: [MapConductorForMapTiler.MapTilerDesign]
+  public static func fromId(_ id: Swift.String?) -> MapConductorForMapTiler.MapTilerDesign
   public static func == (a: MapConductorForMapTiler.MapTilerDesign, b: MapConductorForMapTiler.MapTilerDesign) -> Swift.Bool
   public typealias Identifier = Swift.String
   public func hash(into hasher: inout Swift.Hasher)

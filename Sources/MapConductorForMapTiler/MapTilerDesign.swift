@@ -45,6 +45,21 @@ public struct MapTilerDesign: MapTilerMapDesignTypeProtocol, Hashable {
     public static let Landscape = MapTilerDesign(id: "Landscape", styleId: "landscape")
     public static let Aquarelle = MapTilerDesign(id: "Aquarelle", styleId: "aquarelle")
     public static let OpenStreetMap = MapTilerDesign(id: "OpenStreetMap", styleId: "openstreetmap")
+
+    /// Every SDK-provided design (used by the design selector page and by `fromId`).
+    public static let all: [MapTilerDesign] = [
+        Streets, StreetsDark, StreetsLight, Basic, Bright, Satellite, Outdoor, Winter,
+        Topo, Toner, Dataviz, Backdrop, Ocean, Landscape, Aquarelle, OpenStreetMap,
+    ]
+
+    /// Restores a design from a saved `id`; falls back to ``Streets`` when unknown.
+    ///
+    /// The React Native bridge sends the bare `id` (not `getValue()`), so this is the
+    /// only lookup on that path. Mirrors android `MapTilerDesign.fromId` and
+    /// ``LongdoDesign/fromId(_:)`` one-to-one.
+    public static func fromId(_ id: String?) -> MapTilerDesign {
+        all.first { $0.id == id } ?? Streets
+    }
 }
 
 /// Builds the MapTiler Cloud style.json URL for a map id and API key.

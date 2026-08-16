@@ -19,9 +19,17 @@ import UIKit
 public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, MLNMapViewDelegate {
     /// 明示された鍵が無ければ Info.plist の `MapTilerAPIKey` を使う。
     /// android は AndroidManifest の `MAPTILER_API_KEY` を同じ位置づけで読む。
+    ///
+    /// `$(...)` を含む値は**展開されなかったビルド設定のプレースホルダ**なので弾く。
+    /// そのまま鍵として使うとスタイル URL が 403 になり、「地図が真っ白」という
+    /// 原因の分かりにくい形でしか出ない。`LongdoInitSDK.resolveApiKey` と同じ扱い。
     public static func resolveApiKey(_ explicit: String?) -> String {
         if let explicit, !explicit.isEmpty { return explicit }
-        return (Bundle.main.object(forInfoDictionaryKey: "MapTilerAPIKey") as? String) ?? ""
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "MapTilerAPIKey") as? String,
+              !value.isEmpty,
+              !value.contains("$(")
+        else { return "" }
+        return value
     }
 
     /// このホストが持っている API キー（`makeMapView` で決まる）。
