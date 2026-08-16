@@ -8,9 +8,9 @@ Even using the wrapper API, you can still access the native MapTiler view if you
 
 ## Setup
 
-https://docs-ios.mapconductor.com/setup/maptiler/
+https://mapconductor.com/setup/ios/maptiler/
 
-## API key
+### API key
 
 MapTiler tiles require a [MapTiler Cloud](https://cloud.maptiler.com/) API key.
 Provide it either per view or via `Info.plist`:
@@ -68,7 +68,7 @@ struct MapView: View {
 
 ## Components
 
-### MapTilerMapView [[docs]](https://docs-ios.mapconductor.com/components/mapviewcomponent/)
+### MapTilerMapView [[docs]](https://mapconductor.com/mapview/)
 
 ```swift
 struct MapExample: View {
@@ -90,7 +90,7 @@ struct MapExample: View {
 
 ------------------------------------------------------------------------
 
-### Marker [[docs]](https://docs-ios.mapconductor.com/components/marker/)
+### Marker [[docs]](https://mapconductor.com/markers/)
 
 ```swift
 struct MarkerExample: View {
@@ -111,7 +111,7 @@ struct MarkerExample: View {
 
 ------------------------------------------------------------------------
 
-### InfoBubble [[docs]](https://docs-ios.mapconductor.com/components/infobubble/)
+### InfoBubble [[docs]](https://mapconductor.com/info-bubble/)
 
 ```swift
 struct InfoBubbleExample: View {
@@ -137,7 +137,7 @@ struct InfoBubbleExample: View {
 
 ------------------------------------------------------------------------
 
-### Circle [[docs]](https://docs-ios.mapconductor.com/components/circle/)
+### Circle [[docs]](https://mapconductor.com/circle/)
 
 ```swift
 struct CircleExample: View {
@@ -159,7 +159,7 @@ struct CircleExample: View {
 
 ------------------------------------------------------------------------
 
-### Polyline [[docs]](https://docs-ios.mapconductor.com/components/polyline/)
+### Polyline [[docs]](https://mapconductor.com/polyline/)
 
 ```swift
 struct PolylineExample: View {
@@ -179,7 +179,7 @@ struct PolylineExample: View {
 
 ------------------------------------------------------------------------
 
-### Polygon [[docs]](https://docs-ios.mapconductor.com/components/polygon/)
+### Polygon [[docs]](https://mapconductor.com/polygon/)
 
 ```swift
 struct PolygonExample: View {
@@ -219,7 +219,7 @@ struct PolygonHoleExample: View {
 
 ------------------------------------------------------------------------
 
-### GroundImage [[docs]](https://docs-ios.mapconductor.com/components/groundimage/)
+### GroundImage [[docs]](https://mapconductor.com/ground-image/)
 
 ```swift
 struct GroundImageExample: View {
