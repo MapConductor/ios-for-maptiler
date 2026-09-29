@@ -141,9 +141,15 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
     /// ズームが極端に遅くなる。比較は `styleId` で行う。
     private func applyStyleIfNeeded(to mapView: MLNMapView) {
         guard state.mapDesignType.styleId != appliedStyleId else { return }
-        guard let url = URL(
-            string: mapTilerStyleJsonURL(styleId: state.mapDesignType.styleId, apiKey: resolvedApiKey)
-        ) else { return }
+        let url: URL
+        if state.mapDesignType.styleId == MapTilerDesign.None.styleId {
+            url = BlankMapStyle.fileURL
+        } else {
+            guard let cloud = URL(
+                string: mapTilerStyleJsonURL(styleId: state.mapDesignType.styleId, apiKey: resolvedApiKey)
+            ) else { return }
+            url = cloud
+        }
         mapView.styleURL = url
         appliedStyleId = state.mapDesignType.styleId
     }

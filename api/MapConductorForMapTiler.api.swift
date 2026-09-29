@@ -35,6 +35,7 @@ public struct MapTilerDesign : MapConductorForMapTiler.MapTilerMapDesignTypeProt
   public static let Backdrop: MapConductorForMapTiler.MapTilerDesign
   public static let Ocean: MapConductorForMapTiler.MapTilerDesign
   public static let Landscape: MapConductorForMapTiler.MapTilerDesign
+  public static let None: MapConductorForMapTiler.MapTilerDesign
   public static let Aquarelle: MapConductorForMapTiler.MapTilerDesign
   public static let OpenStreetMap: MapConductorForMapTiler.MapTilerDesign
   public static let all: [MapConductorForMapTiler.MapTilerDesign]

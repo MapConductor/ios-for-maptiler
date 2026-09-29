@@ -29,6 +29,9 @@ public struct MapTilerDesign: MapTilerMapDesignTypeProtocol, Hashable {
         "mapDesign_id=\(id),style=\(styleId)"
     }
 
+    /// No basemap: a background colour and nothing else. Not a MapTiler
+    /// Cloud style; the host loads ``BlankMapStyle`` for it.
+    public static let None = MapTilerDesign(id: "None", styleId: "none")
     public static let Streets = MapTilerDesign(id: "Streets", styleId: "streets-v2")
     public static let StreetsDark = MapTilerDesign(id: "StreetsDark", styleId: "streets-v2-dark")
     public static let StreetsLight = MapTilerDesign(id: "StreetsLight", styleId: "streets-v2-light")
