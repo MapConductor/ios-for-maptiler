@@ -4,6 +4,13 @@ import MapConductorCore
 public protocol MapTilerMapDesignTypeProtocol: MapDesignTypeProtocol where Identifier == String {
     /// MapTiler Cloud map id (e.g. `streets-v2`, `satellite`).
     var styleId: String { get }
+    /// A style at an arbitrary URL instead of a MapTiler Cloud map id. When
+    /// set, `styleId` is only the design's key and is not resolved.
+    var styleURL: String? { get }
+}
+
+public extension MapTilerMapDesignTypeProtocol {
+    var styleURL: String? { nil }
 }
 
 public typealias MapTilerMapDesignType = any MapTilerMapDesignTypeProtocol
@@ -17,11 +24,13 @@ public typealias MapTilerMapDesignType = any MapTilerMapDesignTypeProtocol
 public struct MapTilerDesign: MapTilerMapDesignTypeProtocol, Hashable {
     public let id: String
     public let styleId: String
+    public let styleURL: String?
     public let attributionRules: [AttributionRule]
 
-    public init(id: String, styleId: String, attributionRules: [AttributionRule] = []) {
+    public init(id: String, styleId: String, styleURL: String? = nil, attributionRules: [AttributionRule] = []) {
         self.id = id
         self.styleId = styleId
+        self.styleURL = styleURL
         self.attributionRules = attributionRules
     }
 

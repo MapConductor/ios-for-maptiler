@@ -142,7 +142,10 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
     private func applyStyleIfNeeded(to mapView: MLNMapView) {
         guard state.mapDesignType.styleId != appliedStyleId else { return }
         let url: URL
-        if state.mapDesignType.styleId == MapTilerDesign.None.styleId {
+        if let direct = state.mapDesignType.styleURL {
+            guard let parsed = URL(string: direct) else { return }
+            url = parsed
+        } else if state.mapDesignType.styleId == MapTilerDesign.None.styleId {
             url = BlankMapStyle.fileURL
         } else {
             guard let cloud = URL(
@@ -205,6 +208,19 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         // Publish marker rendering as a map-scoped capability. Add-on modules resolve it
         // from the registry; this provider never learns that clustering exists.
         state.serviceRegistry.put(MarkerRenderingSupportKey.self, strategyManager)
+        // MapTiler is MapLibre underneath: a layer with a style to show hands
+        // it over instead of rasterising it.
+        state.serviceRegistry.put(
+            VectorStyleSupportKey.self,
+            VectorStyleAsDesign(state: state, designId: { $0.id }) { url, rules in
+                MapTilerDesign(
+                    id: "vector-style:\(url)",
+                    styleId: "vector-style:\(url)",
+                    styleURL: url,
+                    attributionRules: rules
+                )
+            }
+        )
 
         let controller = MapTilerViewController(mapView: mapView)
         self.controller = controller
