@@ -212,7 +212,16 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         // it over instead of rasterising it.
         state.serviceRegistry.put(
             VectorStyleSupportKey.self,
-            VectorStyleAsDesign(state: state, designId: { $0.id }) { url, rules in
+            VectorStyleAsDesign(
+                state: state,
+                designId: { $0.id },
+                // Only a design that names a plain style document. The
+                // built-ins are MapTiler cloud styles behind a key, so they
+                // answer nil and the app is told there is nothing to adjust.
+                urlOf: { design in
+                    design.styleURL.flatMap { $0.hasPrefix("http") ? $0 : nil }
+                }
+            ) { url, rules in
                 MapTilerDesign(
                     id: "vector-style:\(url)",
                     styleId: "vector-style:\(url)",
