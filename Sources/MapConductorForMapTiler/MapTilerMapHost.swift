@@ -141,9 +141,18 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
     /// ズームが極端に遅くなる。比較は `styleId` で行う。
     private func applyStyleIfNeeded(to mapView: MLNMapView) {
         guard state.mapDesignType.styleId != appliedStyleId else { return }
-        guard let url = URL(
-            string: mapTilerStyleJsonURL(styleId: state.mapDesignType.styleId, apiKey: resolvedApiKey)
-        ) else { return }
+        let url: URL
+        if let direct = state.mapDesignType.styleURL {
+            guard let parsed = URL(string: direct) else { return }
+            url = parsed
+        } else if state.mapDesignType.styleId == MapTilerDesign.None.styleId {
+            url = BlankMapStyle.fileURL
+        } else {
+            guard let cloud = URL(
+                string: mapTilerStyleJsonURL(styleId: state.mapDesignType.styleId, apiKey: resolvedApiKey)
+            ) else { return }
+            url = cloud
+        }
         mapView.styleURL = url
         appliedStyleId = state.mapDesignType.styleId
     }
@@ -199,6 +208,28 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         // Publish marker rendering as a map-scoped capability. Add-on modules resolve it
         // from the registry; this provider never learns that clustering exists.
         state.serviceRegistry.put(MarkerRenderingSupportKey.self, strategyManager)
+        // MapTiler is MapLibre underneath: a layer with a style to show hands
+        // it over instead of rasterising it.
+        state.serviceRegistry.put(
+            VectorStyleSupportKey.self,
+            VectorStyleAsDesign(
+                state: state,
+                designId: { $0.id },
+                // Only a design that names a plain style document. The
+                // built-ins are MapTiler cloud styles behind a key, so they
+                // answer nil and the app is told there is nothing to adjust.
+                urlOf: { design in
+                    design.styleURL.flatMap { $0.hasPrefix("http") ? $0 : nil }
+                }
+            ) { url, rules in
+                MapTilerDesign(
+                    id: "vector-style:\(url)",
+                    styleId: "vector-style:\(url)",
+                    styleURL: url,
+                    attributionRules: rules
+                )
+            }
+        )
 
         let controller = MapTilerViewController(mapView: mapView)
         self.controller = controller

@@ -11,6 +11,8 @@ public struct MapTilerMapView: View {
     private let apiKey: String?
     private let handlers: MapViewHandlers<MapTilerViewState>
     private let cameraRestriction: CameraRestriction?
+    private let style: MapViewStyle?
+    private let onStyleDiagnostics: (([String]) -> Void)?
     private let content: () -> MapViewContent
 
     /// - Parameter apiKey: MapTiler Cloud API key. If `nil`, it is read from the
@@ -26,6 +28,12 @@ public struct MapTilerMapView: View {
         onCameraMove: OnCameraMoveHandler? = nil,
         onCameraMoveEnd: OnCameraMoveHandler? = nil,
         sdkInitialize: (() -> Void)? = nil,
+        /// How the map looks, when the app states it rather than naming a
+        /// design. `MapConductorVectorStyle` builds one; what happens
+        /// underneath depends on this backend and the app does not have to
+        /// know.
+        style: MapViewStyle? = nil,
+        onStyleDiagnostics: (([String]) -> Void)? = nil,
         @MapViewContentBuilder content: @escaping () -> MapViewContent = { MapViewContent() }
     ) {
         self.state = state
@@ -40,6 +48,8 @@ public struct MapTilerMapView: View {
             sdkInitialize: sdkInitialize
         )
         self.cameraRestriction = cameraRestriction
+        self.style = style
+        self.onStyleDiagnostics = onStyleDiagnostics
         self.content = content
     }
 
@@ -61,6 +71,8 @@ public struct MapTilerMapView: View {
                 cameraRestriction: cameraRestriction,
                 apiKey: apiKey,
                 handlers: handlers,
+                style: style,
+                onStyleDiagnostics: onStyleDiagnostics,
                 content: mapContent
             )
         }
@@ -75,6 +87,8 @@ private struct MapTilerMapViewRepresentable: UIViewRepresentable {
 
     let apiKey: String?
     let handlers: MapViewHandlers<MapTilerViewState>
+    let style: MapViewStyle?
+    let onStyleDiagnostics: (([String]) -> Void)?
     let content: MapViewContent
 
     func makeCoordinator() -> MapTilerMapHost {
@@ -90,6 +104,9 @@ private struct MapTilerMapViewRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MLNMapView, context: Context) {
+        // Every evaluation of the app's `body` lands here; most calls do
+        // nothing. See `MapViewStyleHost.apply`.
+        context.coordinator.applyStyle(style, onDiagnostics: onStyleDiagnostics)
         context.coordinator.syncNativeViewSettings(cameraRestriction: cameraRestriction)
         MCLog.map("MapTilerMapView.updateUIView updateContent markers=\(content.markers.count) bubbles=\(content.infoBubbles.count)")
         context.coordinator.updateContent(content)
@@ -97,6 +114,7 @@ private struct MapTilerMapViewRepresentable: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: MLNMapView, coordinator: MapTilerMapHost) {
+        coordinator.disposeStyle()
         coordinator.unbind()
         uiView.delegate = nil
     }
