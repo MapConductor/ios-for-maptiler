@@ -34,5 +34,12 @@ let package = Package(
                 .product(name: "MapLibre", package: "maplibre-gl-native-distribution"),
             ]
         ),
+        // Checked against a real MLNMapView loading local styles: what goes
+        // wrong across a style change is how a controller meets the new
+        // MLNStyle, which a stub would not show.
+        .testTarget(
+            name: "MapConductorForMapTilerTests",
+            dependencies: ["MapConductorForMapTiler"]
+        ),
     ]
 )
