@@ -200,6 +200,7 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
             defaultMarkerIcon: defaultMarkerIconForTiling,
             tilingEnabled: tilingOptions.enabled,
             tiledMarkerIds: &localTiledMarkerIds,
+            addedTracker: addedTracker,
             shouldTile: { [shouldTileAll] _ in shouldTileAll }
         )
         tiledMarkerIds = localTiledMarkerIds
@@ -214,6 +215,9 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
                 MCLog.marker("MapTilerMarkerController.add skipped updateTileLayer: style not loaded")
             }
         }
+
+        // The newly tiled markers are on the map once their tile layer is.
+        await addedTracker.admitAndNotify(result.tiledAdded)
     }
 
     private func refreshTileLayerIfNeeded() {
