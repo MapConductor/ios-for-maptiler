@@ -267,6 +267,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         controller.registerOverlayController(polygonController)
         controller.registerOverlayController(groundImageController)
         controller.registerOverlayController(rasterController)
+        controller.clearOverlaysHandler = { [weak self] in await self?.clearOverlays() }
 
         let overlayScope = MapOverlayScope()
         self.overlayScope = overlayScope
@@ -309,6 +310,17 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
             },
             projectionGate: screenProjectionGate(feature: "marker animation overlay")
         )
+    }
+
+    /// android-sdk の `clearOverlays()` と同じく、各オーバーレイのコントローラを空にする。
+    /// `controller.clearOverlaysHandler` から呼ばれる。
+    func clearOverlays() async {
+        await markerController?.clear()
+        await polylineController?.clear()
+        await polygonController?.clear()
+        await groundImageController?.clear()
+        await circleController?.clear()
+        await rasterController?.clear()
     }
 
     public func unbind() {
