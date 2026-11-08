@@ -321,6 +321,8 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         await groundImageController?.clear()
         await circleController?.clear()
         await rasterController?.clear()
+        // strategy（クラスタリングなど）が描いたマーカーも消す。
+        await state.serviceRegistry.clearMarkerRendering()
     }
 
     public func unbind() {
