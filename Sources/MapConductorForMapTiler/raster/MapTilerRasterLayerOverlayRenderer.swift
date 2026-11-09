@@ -102,15 +102,15 @@ final class MapTilerRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRender
     }
 
     private func insertLayer(_ layer: MLNRasterStyleLayer, zIndex: Int, style: MLNStyle) {
-        let conductorIndices = style.layers.indices.filter {
-            style.layers[$0].identifier.hasPrefix("mapconductor-raster-layer-")
-        }
-        if zIndex >= 0, zIndex < conductorIndices.count {
-            style.insertLayer(layer, at: UInt(conductorIndices[zIndex]))
-        } else {
-            style.addLayer(layer)
-        }
+        zIndexByLayerId[layer.identifier] = zIndex
+        // ポリゴンのタイル（PolygonTiler）もこの経路で載る。帯はレイヤ ID から決める。
+        let band = OverlayStacking.band(ofStyleLayerId: layer.identifier) ?? .rasterLayer
+        let key = band == .rasterLayer ? OverlayStackKey(.rasterLayer, zIndex: zIndex) : OverlayStackKey(band)
+        MapTilerOverlayStacking.insert(layer, key, into: style, rasterZIndex: zIndexByLayerId)
     }
+
+    /// 差し込み位置を決めるための、載せているラスターの zIndex（スタイルのレイヤは zIndex を持たない）。
+    private var zIndexByLayerId: [String: Int] = [:]
 
     func updateLayerSync(
         layer: MapTilerRasterLayer,
