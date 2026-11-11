@@ -279,6 +279,15 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
             }
         }
         polylineController.tiler = polylineTiler
+        let circleTiler = CircleTiler()
+        circleTiler.onTemplate = { [weak rasterController] template, tileSize in
+            if let template {
+                await rasterController?.upsert(state: CircleTiler.rasterLayerState(template: template, tileSize: tileSize))
+            } else {
+                await rasterController?.removeById(CircleTiler.layerId)
+            }
+        }
+        circleController.tiler = circleTiler
         self.hullPolygonController = MapTilerPolygonController(mapView: mapView)
 
         // クリックカスケードとスロット解決がここから kind で引く。
@@ -384,6 +393,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
     public func updateContent(_ content: MapViewContent) {
         if let mapView {
             polylineController?.setCurrentCameraPosition(currentCameraPosition(from: mapView))
+            circleController?.setCurrentCameraPosition(currentCameraPosition(from: mapView))
         }
         infoBubbleCoordinator?.syncInfoBubbles(content.infoBubbles)
         markerController?.tilingOptions = content.markerTilingOptions
@@ -395,7 +405,9 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         overlayScope?.polygonCollector.sync(content.polygons.map { $0.state })
         polygonController?.tiler?.refreshIfServerMoved()
         if polylineController?.tiler?.setOptions(content.polylineTilingOptions) == true { overlayScope?.polylineCollector.flush() }
+        if circleController?.tiler?.setOptions(content.circleTilingOptions) == true { overlayScope?.circleCollector.flush() }
         polylineController?.tiler?.refreshIfServerMoved()
+        circleController?.tiler?.refreshIfServerMoved()
         for handler in content.polygonSyncHandlers {
             let hullController = hullPolygonController
             handler.bindPolygonSync { [weak hullController] states in
@@ -457,6 +469,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
     public func mapView(_ mapView: MLNMapView, regionWillChangeAnimated animated: Bool) {
         let camera = currentCameraPosition(from: mapView)
         polylineController?.setCurrentCameraPosition(camera)
+        circleController?.setCurrentCameraPosition(camera)
         controller?.notifyCameraMoveStart(camera)
         onCameraMoveStart?(camera)
         // Removed async Task calls to prevent crashes
@@ -471,6 +484,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         let camera = currentCameraPosition(from: mapView)
         state.updateCameraPosition(camera)
         polylineController?.setCurrentCameraPosition(camera)
+        circleController?.setCurrentCameraPosition(camera)
         controller?.notifyCameraMove(camera)
         onCameraMove?(camera)
         // Removed async Task calls to prevent crashes
@@ -489,6 +503,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         if controller?.applyCameraRestrictionCorrectionIfNeeded(camera) == true { return }
         state.updateCameraPosition(camera)
         polylineController?.setCurrentCameraPosition(camera)
+        circleController?.setCurrentCameraPosition(camera)
         controller?.notifyCameraMoveEnd(camera)
         onCameraMoveEnd?(camera)
         // Removed async Task calls to prevent crashes
@@ -505,6 +520,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
 
         // Ensure polyline hit-testing uses the current zoom even if no region-change callbacks have fired yet.
         polylineController?.setCurrentCameraPosition(currentCameraPosition(from: mapView))
+        circleController?.setCurrentCameraPosition(currentCameraPosition(from: mapView))
 
         if markerController?.handleTap(at: point) == true {
             updateInfoBubbleLayouts()
