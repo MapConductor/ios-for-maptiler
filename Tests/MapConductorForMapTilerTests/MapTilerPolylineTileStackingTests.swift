@@ -63,6 +63,7 @@ final class MapTilerPolylineTileStackingTests: XCTestCase {
     private func order(_ style: MLNStyle) -> [String] {
         style.layers.compactMap { layer -> String? in
             let id = layer.identifier
+            if id.hasPrefix("mapconductor-raster-layer-\(CircleTiler.layerId)") { return "circle-tiles" }
             if id.hasPrefix("mapconductor-raster-layer-\(PolylineTiler.layerId)") { return "polyline-tiles" }
             if id.hasPrefix("mapconductor-raster-layer-\(PolygonTiler.layerId)") { return "polygon-tiles" }
             if id.hasPrefix("mapconductor-circles-layer-") { return id.hasSuffix("-stroke") ? nil : "circles" }
@@ -74,6 +75,7 @@ final class MapTilerPolylineTileStackingTests: XCTestCase {
     private func tiles(_ raster: MapTilerRasterLayerController) async {
         await raster.upsert(state: PolylineTiler.rasterLayerState(template: "http://127.0.0.1:1/pl/v1/{z}/{x}/{y}.png"))
         await raster.upsert(state: PolygonTiler.rasterLayerState(template: "http://127.0.0.1:1/pg/v1/{z}/{x}/{y}.png"))
+        await raster.upsert(state: CircleTiler.rasterLayerState(template: "http://127.0.0.1:1/circle/v1/{z}/{x}/{y}.png"))
     }
 
     func testTilesAddedAfterTheNativeLayersGoUnderThePolylines() async {
@@ -89,7 +91,7 @@ final class MapTilerPolylineTileStackingTests: XCTestCase {
         await settle()
         await tiles(raster)
         await settle()
-        XCTAssertEqual(order(style), ["polygon-tiles", "circles", "polyline-tiles", "polylines"])
+        XCTAssertEqual(order(style), ["polygon-tiles", "circle-tiles", "circles", "polyline-tiles", "polylines"])
         raster.unbind()
         polylines.unbind()
         circles.unbind()
@@ -107,11 +109,11 @@ final class MapTilerPolylineTileStackingTests: XCTestCase {
         polylines.onStyleLoaded(style)
         circles.onStyleLoaded(style)
         await settle()
-        XCTAssertEqual(order(style), ["polygon-tiles", "circles", "polyline-tiles", "polylines"])
+        XCTAssertEqual(order(style), ["polygon-tiles", "circle-tiles", "circles", "polyline-tiles", "polylines"])
         // A new template (in-place change) re-adds the tile layer: still in its place.
         await raster.upsert(state: PolylineTiler.rasterLayerState(template: "http://127.0.0.1:1/pl/v2/{z}/{x}/{y}.png"))
         await settle()
-        XCTAssertEqual(order(style), ["polygon-tiles", "circles", "polyline-tiles", "polylines"])
+        XCTAssertEqual(order(style), ["polygon-tiles", "circle-tiles", "circles", "polyline-tiles", "polylines"])
         raster.unbind()
         polylines.unbind()
         circles.unbind()
