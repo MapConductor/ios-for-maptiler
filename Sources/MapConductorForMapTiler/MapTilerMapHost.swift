@@ -1,6 +1,6 @@
 import Combine
 import Foundation
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import MapLibre
 import SwiftUI
 import UIKit
@@ -141,9 +141,18 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
     /// ズームが極端に遅くなる。比較は `styleId` で行う。
     private func applyStyleIfNeeded(to mapView: MLNMapView) {
         guard state.mapDesignType.styleId != appliedStyleId else { return }
-        guard let url = URL(
-            string: mapTilerStyleJsonURL(styleId: state.mapDesignType.styleId, apiKey: resolvedApiKey)
-        ) else { return }
+        let url: URL
+        if let direct = state.mapDesignType.styleURL {
+            guard let parsed = URL(string: direct) else { return }
+            url = parsed
+        } else if state.mapDesignType.styleId == MapTilerDesign.None.styleId {
+            url = BlankMapStyle.fileURL
+        } else {
+            guard let cloud = URL(
+                string: mapTilerStyleJsonURL(styleId: state.mapDesignType.styleId, apiKey: resolvedApiKey)
+            ) else { return }
+            url = cloud
+        }
         mapView.styleURL = url
         appliedStyleId = state.mapDesignType.styleId
     }
@@ -199,6 +208,28 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         // Publish marker rendering as a map-scoped capability. Add-on modules resolve it
         // from the registry; this provider never learns that clustering exists.
         state.serviceRegistry.put(MarkerRenderingSupportKey.self, strategyManager)
+        // MapTiler is MapLibre underneath: a layer with a style to show hands
+        // it over instead of rasterising it.
+        state.serviceRegistry.put(
+            VectorStyleSupportKey.self,
+            VectorStyleAsDesign(
+                state: state,
+                designId: { $0.id },
+                // Only a design that names a plain style document. The
+                // built-ins are MapTiler cloud styles behind a key, so they
+                // answer nil and the app is told there is nothing to adjust.
+                urlOf: { design in
+                    design.styleURL.flatMap { $0.hasPrefix("http") ? $0 : nil }
+                }
+            ) { url, rules in
+                MapTilerDesign(
+                    id: "vector-style:\(url)",
+                    styleId: "vector-style:\(url)",
+                    styleURL: url,
+                    attributionRules: rules
+                )
+            }
+        )
 
         let controller = MapTilerViewController(mapView: mapView)
         self.controller = controller
@@ -226,6 +257,37 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
 
         let polygonController = MapTilerPolygonController(mapView: mapView)
         self.polygonController = polygonController
+        // Many polygons are drawn into raster tiles and shown as one raster
+        // layer; taps still resolve against the original shapes.
+        let polygonTiler = PolygonTiler()
+        polygonTiler.onTemplate = { [weak rasterController] template, tileSize in
+            if let template {
+                await rasterController?.upsert(state: PolygonTiler.rasterLayerState(template: template, tileSize: tileSize))
+            } else {
+                await rasterController?.removeById(PolygonTiler.layerId)
+            }
+        }
+        polygonController.tiler = polygonTiler
+        // Many polylines likewise, in their own raster layer in the polyline band
+        // (under the natively drawn polylines); taps still resolve against the original lines.
+        let polylineTiler = PolylineTiler()
+        polylineTiler.onTemplate = { [weak rasterController] template, tileSize in
+            if let template {
+                await rasterController?.upsert(state: PolylineTiler.rasterLayerState(template: template, tileSize: tileSize))
+            } else {
+                await rasterController?.removeById(PolylineTiler.layerId)
+            }
+        }
+        polylineController.tiler = polylineTiler
+        let circleTiler = CircleTiler()
+        circleTiler.onTemplate = { [weak rasterController] template, tileSize in
+            if let template {
+                await rasterController?.upsert(state: CircleTiler.rasterLayerState(template: template, tileSize: tileSize))
+            } else {
+                await rasterController?.removeById(CircleTiler.layerId)
+            }
+        }
+        circleController.tiler = circleTiler
         self.hullPolygonController = MapTilerPolygonController(mapView: mapView)
 
         // クリックカスケードとスロット解決がここから kind で引く。
@@ -236,6 +298,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         controller.registerOverlayController(polygonController)
         controller.registerOverlayController(groundImageController)
         controller.registerOverlayController(rasterController)
+        controller.clearOverlaysHandler = { [weak self] in await self?.clearOverlays() }
 
         let overlayScope = MapOverlayScope()
         self.overlayScope = overlayScope
@@ -280,6 +343,19 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         )
     }
 
+    /// android-sdk の `clearOverlays()` と同じく、各オーバーレイのコントローラを空にする。
+    /// `controller.clearOverlaysHandler` から呼ばれる。
+    func clearOverlays() async {
+        await markerController?.clear()
+        await polylineController?.clear()
+        await polygonController?.clear()
+        await groundImageController?.clear()
+        await circleController?.clear()
+        await rasterController?.clear()
+        // strategy（クラスタリングなど）が描いたマーカーも消す。
+        await state.serviceRegistry.clearMarkerRendering()
+    }
+
     public func unbind() {
         // 登録した capability を取り下げる。レジストリの持ち主は state で、ビューより長生きするため、
         // ここで外さないと破棄済みのコントローラを掴んだまま残る。
@@ -317,6 +393,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
     public func updateContent(_ content: MapViewContent) {
         if let mapView {
             polylineController?.setCurrentCameraPosition(currentCameraPosition(from: mapView))
+            circleController?.setCurrentCameraPosition(currentCameraPosition(from: mapView))
         }
         infoBubbleCoordinator?.syncInfoBubbles(content.infoBubbles)
         markerController?.tilingOptions = content.markerTilingOptions
@@ -326,6 +403,11 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         overlayScope?.circleCollector.sync(content.circles.map { $0.state })
         overlayScope?.polylineCollector.sync(content.polylines.map { $0.state })
         overlayScope?.polygonCollector.sync(content.polygons.map { $0.state })
+        polygonController?.tiler?.refreshIfServerMoved()
+        if polylineController?.tiler?.setOptions(content.polylineTilingOptions) == true { overlayScope?.polylineCollector.flush() }
+        if circleController?.tiler?.setOptions(content.circleTilingOptions) == true { overlayScope?.circleCollector.flush() }
+        polylineController?.tiler?.refreshIfServerMoved()
+        circleController?.tiler?.refreshIfServerMoved()
         for handler in content.polygonSyncHandlers {
             let hullController = hullPolygonController
             handler.bindPolygonSync { [weak hullController] states in
@@ -387,6 +469,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
     public func mapView(_ mapView: MLNMapView, regionWillChangeAnimated animated: Bool) {
         let camera = currentCameraPosition(from: mapView)
         polylineController?.setCurrentCameraPosition(camera)
+        circleController?.setCurrentCameraPosition(camera)
         controller?.notifyCameraMoveStart(camera)
         onCameraMoveStart?(camera)
         // Removed async Task calls to prevent crashes
@@ -401,6 +484,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         let camera = currentCameraPosition(from: mapView)
         state.updateCameraPosition(camera)
         polylineController?.setCurrentCameraPosition(camera)
+        circleController?.setCurrentCameraPosition(camera)
         controller?.notifyCameraMove(camera)
         onCameraMove?(camera)
         // Removed async Task calls to prevent crashes
@@ -419,6 +503,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
         if controller?.applyCameraRestrictionCorrectionIfNeeded(camera) == true { return }
         state.updateCameraPosition(camera)
         polylineController?.setCurrentCameraPosition(camera)
+        circleController?.setCurrentCameraPosition(camera)
         controller?.notifyCameraMoveEnd(camera)
         onCameraMoveEnd?(camera)
         // Removed async Task calls to prevent crashes
@@ -435,6 +520,7 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
 
         // Ensure polyline hit-testing uses the current zoom even if no region-change callbacks have fired yet.
         polylineController?.setCurrentCameraPosition(currentCameraPosition(from: mapView))
+        circleController?.setCurrentCameraPosition(currentCameraPosition(from: mapView))
 
         if markerController?.handleTap(at: point) == true {
             updateInfoBubbleLayouts()
@@ -496,9 +582,32 @@ public final class MapTilerMapHost: MapViewCoordinatorBase<MapTilerViewState>, M
             farLeft: corners?.farLeft,
             farRight: corners?.farRight
         )
-        return mapView.toMapCameraPosition(
+        // 地図の中心はパディングの分ずらしてある。ターゲット（パディングを除いた領域の中央）へ戻す。
+        // 画面内なら地図の投影で直接読む。画面の外（パディングが地図より大きい）なら計算で戻す。
+        // 地図は安全領域の内側の中央を中心にしているので、計算は安全領域から測ったパディングで行う。
+        let raw = mapView.toMapCameraPosition(
             logicalTiltHint: controller?.lastLogicalTilt,
             visibleRegion: visibleRegion
+        )
+        let paddings = controller?.lastPaddings
+        let size = mapView.bounds.size
+        let computed = CameraPaddingEmulation.target(
+            forCameraCenter: raw.position,
+            camera: raw,
+            paddings: MapTilerViewController.safeAreaRelative(paddings, on: mapView),
+            fov: mapTilerVerticalFieldOfView,
+            viewportSize: size
+        )
+        return CameraPaddingEmulation.restored(
+            raw,
+            paddings: paddings,
+            fov: mapTilerVerticalFieldOfView,
+            viewportSize: size,
+            unproject: { point in
+                guard mapView.bounds.contains(point) else { return computed }
+                let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
+                return GeoPoint(latitude: coordinate.latitude, longitude: coordinate.longitude, altitude: 0)
+            }
         )
     }
 

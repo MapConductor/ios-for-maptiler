@@ -2,7 +2,7 @@ import Combine
 import CoreGraphics
 import CoreLocation
 import MapLibre
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import UIKit
 
 @MainActor
@@ -27,6 +27,9 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
     private var tileRouteId: String?
     private var tileVersion: Int64 = 0
     private var tiledMarkerIds: Set<String> = []
+    /// Markers tiled while the style was loading. Their tile layer goes on the
+    /// map in `onStyleLoaded`, and their `onAdded` waits for it.
+    private var tiledAwaitingStyle: [MarkerState] = []
     private var tileSourceId: String?
     private var tileLayerId: String?
     private var lastServerBaseUrl: String = ""
@@ -69,7 +72,11 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
             tileSize: Self.retinaAwareTileSize,
             cacheSizeBytes: tilingOptions.cacheSize,
             debugTileOverlay: tilingOptions.debugTileOverlay,
-            iconScaleCallback: scaledCallback
+            iconScaleCallback: scaledCallback,
+            // MapLibre と同じく tilingOptions から。渡し忘れると 14px の間引きが
+            // 黙って無効になり、密なデータで描画も突き合わせも重くなる（実際に
+            // ここが 0 のままだった）。
+            declutterPx: tilingOptions.declutterPx
         )
         TileServerRegistry.get().register(routeId: routeId, provider: renderer)
         tileRenderer = renderer
@@ -83,6 +90,7 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
         if !tiledMarkerIds.isEmpty {
             updateTileLayer(style: style, hasTiledMarkers: true)
         }
+        reportTiledAwaitingStyle()
         styleGate.markReady()
     }
 
@@ -94,8 +102,18 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
         eventController?.handleLongPress(recognizer) ?? false
     }
 
+    /// 同一一覧の再送を見抜く門番。詳細は型のコメントに。
+    private var syncIdentity = MarkerListIdentity()
+
     func syncMarkers(_ markers: [Marker]) {
         MCLog.marker("MapTilerMarkerController.syncMarkers count=\(markers.count) styleReady=\(styleGate.isReady)")
+        // 同じ一覧の再送は入口で帰す。SwiftUI はカメラが動くたびに body を
+        // 再評価し、そのたびに全マーカーがここへ来る。なぜそれが実害か
+        // （144k 件で操作の 89% が凍った）は core の MarkerListIdentity に。
+        guard syncIdentity.shouldProcess(markers) else {
+            if styleGate.isReady { refreshTileLayerIfNeeded() }
+            return
+        }
         let newIds = Set(markers.map { $0.id })
         let oldIds = Set(markerStatesById.keys)
 
@@ -130,7 +148,6 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
 
     private func subscribeToMarker(_ state: MarkerState) {
         guard markerSubscriptions[state.id] == nil else { return }
-        MCLog.marker("MapTilerMarkerController.subscribe id=\(state.id)")
         markerSubscriptions[state.id] = state.asFlow()
             .dropFirst() // Skip initial value to avoid triggering update on subscription
             .receive(on: DispatchQueue.main)
@@ -187,6 +204,7 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
             defaultMarkerIcon: defaultMarkerIconForTiling,
             tilingEnabled: tilingOptions.enabled,
             tiledMarkerIds: &localTiledMarkerIds,
+            addedTracker: addedTracker,
             shouldTile: { [shouldTileAll] _ in shouldTileAll }
         )
         tiledMarkerIds = localTiledMarkerIds
@@ -200,6 +218,15 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
             } else {
                 MCLog.marker("MapTilerMarkerController.add skipped updateTileLayer: style not loaded")
             }
+        }
+
+        // The newly tiled markers are on the map once their tile layer is. While
+        // the style loads there is no layer: `onStyleLoaded` adds it, and reports
+        // these then.
+        if mapView?.style != nil {
+            await addedTracker.admitAndNotify(result.tiledAdded)
+        } else {
+            tiledAwaitingStyle.append(contentsOf: result.tiledAdded)
         }
     }
 
@@ -236,7 +263,8 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
         let source = MLNRasterTileSource(identifier: sourceId, tileURLTemplates: [urlTemplate], options: options)
         let layer = MLNRasterStyleLayer(identifier: layerId, source: source)
         style.addSource(source)
-        style.addLayer(layer)
+        // マーカーのタイルはマーカーと同じ帯。
+        MapTilerOverlayStacking.insert(layer, OverlayStackKey(.marker), into: style)
     }
 
     /// Hit-test tiled markers at the given screen point (pts). Returns true if a clickable marker was found.
@@ -267,7 +295,18 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
         return false
     }
 
+    /// The markers tiled while the style loaded are on the map now that their
+    /// tile layer is. Those removed or drawn natively since are not reported
+    /// here (a native one was reported when it was drawn).
+    private func reportTiledAwaitingStyle() {
+        guard !tiledAwaitingStyle.isEmpty else { return }
+        let landed = tiledAwaitingStyle.filter { tiledMarkerIds.contains($0.id) }
+        tiledAwaitingStyle.removeAll()
+        Task { [addedTracker] in await addedTracker.admitAndNotify(landed) }
+    }
+
     func unbind() {
+        tiledAwaitingStyle.removeAll()
         markerSubscriptions.values.forEach { $0.cancel() }
         markerSubscriptions.removeAll()
         markerStatesById.removeAll()

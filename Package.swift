@@ -7,13 +7,13 @@ let frameworkLibraryType: Product.Library.LibraryType? =
 let usingLocalCore = FileManager.default.fileExists(atPath: "../ios-sdk-core/Package.swift")
 let coreDependency: Package.Dependency = usingLocalCore
     ? .package(path: "../ios-sdk-core")
-    : .package(url: "https://github.com/MapConductor/ios-sdk-core", from: "1.1.4")
+    : .package(url: "https://github.com/MapConductor/ios-sdk-core", from: "1.4.0")
 
 let package = Package(
     name: "mapconductor-for-maptiler",
     platforms: [
         // See ios-sdk-core/Package.swift's comment: "15.0" must not be used here.
-        .iOS("15.1"),
+        .iOS("15.5"),
     ],
     products: [
         .library(
@@ -24,7 +24,7 @@ let package = Package(
     ],
     dependencies: [
         coreDependency,
-        .package(url: "https://github.com/maplibre/maplibre-gl-native-distribution", from: "6.20.0"),
+        .package(url: "https://github.com/maplibre/maplibre-gl-native-distribution", from: "7.0.0"),
     ],
     targets: [
         .target(
@@ -33,6 +33,13 @@ let package = Package(
                 .product(name: "MapConductorCore", package: "ios-sdk-core"),
                 .product(name: "MapLibre", package: "maplibre-gl-native-distribution"),
             ]
+        ),
+        // Checked against a real MLNMapView loading local styles: what goes
+        // wrong across a style change is how a controller meets the new
+        // MLNStyle, which a stub would not show.
+        .testTarget(
+            name: "MapConductorForMapTilerTests",
+            dependencies: ["MapConductorForMapTiler"]
         ),
     ]
 )
