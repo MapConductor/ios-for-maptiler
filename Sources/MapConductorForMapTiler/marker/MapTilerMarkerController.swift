@@ -148,19 +148,16 @@ final class MapTilerMarkerController: AbstractMarkerController<MLNPointFeature, 
 
     private func subscribeToMarker(_ state: MarkerState) {
         guard markerSubscriptions[state.id] == nil else { return }
-        markerSubscriptions[state.id] = state.asFlow()
-            .dropFirst() // Skip initial value to avoid triggering update on subscription
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
+        markerSubscriptions[state.id] = state.onChange { [weak self] in
+            guard let self else { return }
+            guard self.markerStatesById[state.id] != nil else { return }
+            MCLog.marker("MapTilerMarkerController.onChange id=\(state.id) anim=\(String(describing: state.getAnimation()))")
+            Task { [weak self] in
                 guard let self else { return }
-                guard self.markerStatesById[state.id] != nil else { return }
-                MCLog.marker("MapTilerMarkerController.asFlow emit id=\(state.id) anim=\(String(describing: state.getAnimation()))")
-                Task { [weak self] in
-                    guard let self else { return }
-                    await self.update(state: state)
-                    self.onUpdateInfoBubble(state.id)
-                }
+                await self.update(state: state)
+                self.onUpdateInfoBubble(state.id)
             }
+        }
     }
 
     func getMarkerState(for id: String) -> MarkerState? {
